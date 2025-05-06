@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mileage & Cost Calculator</title>
+  <script src="https://maps.googleapis.com/maps/api/js?key=AddAPIKEY&libraries=places"></script>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 1em; background: #f5f5f5; }
+    h2 { text-align: center; }
+    label { display: block; margin-top: 1em; font-weight: bold; }
+    input[type="text"], input[type="number"] {
+      width: 100%; padding: 0.6em; margin-top: 0.2em;
+      border: 1px solid #ccc; border-radius: 4px;
+    }
+    input[type="checkbox"] { margin-right: 0.4em; }
+    
+    .button-row {
+      display: flex;
+      gap: 10px;
+      justify-content: space-between;
+      margin-top: 0.5em;
+    }
+    .button-row .btn {
+      width: 48%;
+    }
+
+    .link-button {
+      text-align: center;
+      display: inline-block;
+      text-decoration: none;
+      line-height: 2.6em;
+    }
+
+    .btn {
+      padding: 0.7em; margin-top: 1em; width: 100%;
+      font-size: 1em; cursor: pointer;
+      border: none; border-radius: 5px;
+    }
+    .btn-primary { background-color: #4285f4; color: white; }
+    .btn-secondary { background-color: #777; color: white; }
+    
+    #output {
+      margin-top: 1.5em;
+      padding: 1em;
+      background-color: white;
+      border-radius: 6px;
+      box-shadow: 0 0 6px rgba(0,0,0,0.1);
+    }
+    #companySection { display: none; }
+    #historyPanel {
+      margin-top: 2em;
+      background: white;
+      border-radius: 6px;
+      box-shadow: 0 0 6px rgba(0,0,0,0.1);
+      padding: 1em;
+    }
+    .history-entry {
+      margin-bottom: 0.75em;
+      border-bottom: 1px dashed #ccc;
+      padding-bottom: 0.5em;
+    }
+  </style>
+</head>
+<body>
+  <h2>Mileage and Cost Calculator</h2>
+
+  <label><input type="checkbox" id="includeCompany" /> Include Company & Work Order</label>
+
+  <div id="companySection">
+    <label for="companyName">Company Name:</label>
+    <input type="text" id="companyName" />
+    <label for="workOrder">Work Order Number:</label>
+    <input type="text" id="workOrder" />
+  </div>
+
+  <label for="origin">Starting Location (optional):</label>
+  <input type="text" id="origin" placeholder="Leave blank to use home base" />
+  
+  <button class="btn btn-secondary" onclick="useCurrentLocation()">📍 Use Current Location</button>
+
+  <label for="destination">Destination:</label>
+  <input type="text" id="destination" />
+  <label for="waypoint">Optional Stop (Waypoint):</label>
+  <input type="text" id="waypoint" />
+
+  <label for="costPerMile">Cost Per Mile ($):</label>
+  <input type="number" id="costPerMile" step="0.01" />
+  <label for="freeMiles">First X Miles Are Free:</label>
+  <input type="number" id="freeMiles" step="1" />
+  <label><input type="checkbox" id="roundTrip" /> Round Trip</label>
+  <label><input type="checkbox" id="addMarkup" /> Apply Markup</label>
+  <label for="markupPercent">Markup Percentage (%):</label>
+  <input type="number" id="markupPercent" step="0.1" />
+
+  <button class="btn btn-primary" onclick="calculateDistance()">Calculate</button>
+  
+  <div class="button-row">
+    <button class="btn btn-secondary" onclick="clearFields()">Clear Fields</button>
+    <button class="btn btn-secondary" onclick="clearSaved()">Clear Saved Defaults</button>
+  </div>
+  
+  <div class="button-row">
+    <button type="button" class="btn btn-secondary" onclick="toggleHistory()">Toggle Trip History</button>
+    <a href="trip_history.html" target="_blank" class="btn btn-secondary link-button">View Full History</a>
+  </div>
+
+
+  <div id="output"></div>
+
+  <div id="historyPanel" style="display:none;">
+    <h3>Recent Trips</h3>
+    <div id="tripHistoryList"></div>
+  </div>
+
+  <script>
+    document.getElementById("includeCompany").addEventListener("change", function () {
+      document.getElementById("companySection").style.display = this.checked ? "block" : "none";
+    });
+
+    function clearSaved() {
+      localStorage.clear();
+      alert("Saved values cleared.");
+    }
+    
+    function clearFields() {
+      const fields = [
+      "origin", "destination", "waypoint",
+      "costPerMile", "freeMiles", "markupPercent",
+      "companyName", "workOrder"
+    ];
+    fields.forEach(id => document.getElementById(id).value = "");
+      document.getElementById("roundTrip").checked = false;
+      document.getElementById("addMarkup").checked = false;
+      document.getElementById("includeCompany").checked = false;
+      document.getElementById("companySection").style.display = "none";
+    }
+
+    
+    function useCurrentLocation() {
+      navigator.geolocation.getCurrentPosition(pos => {
+      const geocoder = new google.maps.Geocoder();
+      const location = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      geocoder.geocode({ location }, (results, status) => {
+        if (status === "OK" && results[0]) {
+          document.getElementById("origin").value = results[0].formatted_address;
+        } else {
+          alert("Unable to determine your address.");
+        }
+      });
+    });
+  }
+
+    function toggleHistory() {
+      const panel = document.getElementById("historyPanel");
+      panel.style.display = panel.style.display === "none" ? "block" : "none";
+      renderTripHistory();
+    }
+
+    async function calculateDistance() {
+      const origin = document.getElementById("origin").value.trim();
+      const destination = document.getElementById("destination").value.trim();
+      const waypoint = document.getElementById("waypoint").value.trim();
+      const costPerMile = parseFloat(document.getElementById("costPerMile").value) || 0.70;
+      const freeMiles = parseFloat(document.getElementById("freeMiles").value) || 0;
+      const isRoundTrip = document.getElementById("roundTrip").checked;
+      const markupEnabled = document.getElementById("addMarkup").checked;
+      const markupPercent = parseFloat(document.getElementById("markupPercent").value) || 0;
+      const includeCompany = document.getElementById("includeCompany").checked;
+      const companyName = includeCompany ? document.getElementById("companyName").value.trim() : "";
+      const workOrder = includeCompany ? document.getElementById("workOrder").value.trim() : "";
+
+      localStorage.setItem("origin", origin);
+      localStorage.setItem("costPerMile", costPerMile);
+      localStorage.setItem("freeMiles", freeMiles);
+      localStorage.setItem("roundTrip", isRoundTrip);
+      localStorage.setItem("addMarkup", markupEnabled);
+      localStorage.setItem("markupPercent", markupPercent);
+      localStorage.setItem("includeCompany", includeCompany);
+      localStorage.setItem("companyName", companyName);
+      localStorage.setItem("workOrder", workOrder);
+
+      const response = await fetch("https://yourwebsite.com/api/calculate.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ origin: origin, destination: destination }),
+      });
+
+      const data = await response.json();
+      if (!data.distanceMeters) {
+        document.getElementById("output").innerText = "Error: " + (data.error || "Unable to calculate distance.");
+        return;
+      }
+
+      const oneWayMiles = data.distanceMeters / 1609.34;
+      const totalMiles = isRoundTrip ? oneWayMiles * 2 : oneWayMiles;
+      const effectiveFree = isRoundTrip ? freeMiles * 2 : freeMiles;
+      const chargeableMiles = Math.max(totalMiles - effectiveFree, 0);
+      let cost = chargeableMiles * costPerMile;
+      if (markupEnabled && markupPercent > 0) {
+        cost += (cost * markupPercent) / 100;
+      }
+
+      const date = new Date().toLocaleString();
+      const output = `
+        <strong>Trip Summary</strong><br>
+        ${companyName ? `Company: ${companyName}<br>` : ""}
+        ${workOrder ? `Work Order: ${workOrder}<br>` : ""}
+        Destination: ${destination}<br>
+        One-Way: ${oneWayMiles.toFixed(2)} miles<br>
+        ${isRoundTrip ? `Round Trip: ${totalMiles.toFixed(2)} miles<br>` : ""}
+        Free Miles: ${effectiveFree.toFixed(2)}<br>
+        Chargeable: ${chargeableMiles.toFixed(2)} miles<br>
+        Cost: $${cost.toFixed(2)}<br>
+        ${markupEnabled ? `Markup: ${markupPercent.toFixed(1)}%<br>` : ""}
+        Date: ${date}
+      `;
+
+      document.getElementById("output").innerHTML = output;
+
+      const newTrip = {
+        date,
+        destination,
+        totalMiles,
+        chargeableMiles,
+        cost,
+        company: companyName,
+        workOrder: workOrder
+      };
+
+      let history = JSON.parse(localStorage.getItem("tripHistory") || "[]");
+      history.unshift(newTrip);
+      history = history.slice(0, 5);
+      localStorage.setItem("tripHistory", JSON.stringify(history));
+
+      renderTripHistory();
+    }
+
+    function renderTripHistory() {
+      const history = JSON.parse(localStorage.getItem("tripHistory") || "[]");
+      const container = document.getElementById("tripHistoryList");
+      container.innerHTML = "";
+      if (!history.length) {
+        container.innerHTML = "<p>No recent trips saved.</p>";
+        return;
+      }
+
+      history.forEach(t => {
+        const div = document.createElement("div");
+        div.classList.add("history-entry");
+        div.innerHTML = `
+          <strong>${t.destination}</strong> — $${t.cost.toFixed(2)}<br>
+          Miles: ${t.totalMiles.toFixed(2)} | Charged: ${t.chargeableMiles.toFixed(2)}<br>
+          ${t.company ? `Company: ${t.company}<br>` : ""}
+          ${t.workOrder ? `WO#: ${t.workOrder}<br>` : ""}
+          <em>${t.date}</em>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    window.onload = () => {
+      initAutocomplete();
+      document.getElementById("origin").value = localStorage.getItem("origin") || "";
+      document.getElementById("costPerMile").value = localStorage.getItem("costPerMile") || "0.70";
+      document.getElementById("freeMiles").value = localStorage.getItem("freeMiles") || "0";
+      document.getElementById("markupPercent").value = localStorage.getItem("markupPercent") || "10";
+      document.getElementById("roundTrip").checked = localStorage.getItem("roundTrip") === "true";
+      document.getElementById("addMarkup").checked = localStorage.getItem("addMarkup") === "true";
+      const includeCompany = localStorage.getItem("includeCompany") === "true";
+      document.getElementById("includeCompany").checked = includeCompany;
+      document.getElementById("companySection").style.display = includeCompany ? "block" : "none";
+      document.getElementById("companyName").value = localStorage.getItem("companyName") || "";
+      document.getElementById("workOrder").value = localStorage.getItem("workOrder") || "";
+    };
+    
+    function initAutocomplete() {
+    new google.maps.places.Autocomplete(document.getElementById("origin"));
+    new google.maps.places.Autocomplete(document.getElementById("destination"));
+    new google.maps.places.Autocomplete(document.getElementById("waypoint"));
+}
+    
+  </script>
+</body>
+</html>
